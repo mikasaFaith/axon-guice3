@@ -23,6 +23,9 @@ import org.axonframework.eventhandling.EventBus;
 import org.axonframework.eventhandling.saga.ResourceInjector;
 import org.axonframework.eventhandling.saga.repository.SagaStore;
 import org.axonframework.eventhandling.saga.repository.inmemory.InMemorySagaStore;
+import org.axonframework.eventhandling.tokenstore.TokenStore;
+import org.axonframework.eventhandling.tokenstore.inmemory.InMemoryTokenStore;
+import org.axonframework.eventsourcing.eventstore.EventStorageEngine;
 import org.axonframework.eventsourcing.eventstore.inmemory.InMemoryEventStorageEngine;
 
 import com.google.common.collect.Maps;
@@ -51,9 +54,9 @@ public class AxonGuiceModule extends AbstractModule {
 				.collect(Collectors.toSet());
 		Set<Provider<?>> eventHandlerProviders = config.getEventHandlerClasses().stream().map(eh -> getProvider(eh))
 				.collect(Collectors.toSet());
-		Map<String, Set<Provider<?>>> trackingEventHandlerProviders = Maps.transformValues(
-				config.getTrackingEventHandlerClasses(),
-				(Set<Class<?>> s) -> s.stream().map(eh -> getProvider(eh)).collect(Collectors.toSet()));
+		Map<String, Set<Provider<?>>> trackingEventHandlerProviders = Maps
+				.newHashMap(Maps.transformValues(config.getTrackingEventHandlerClasses(),
+						(Set<Class<?>> s) -> s.stream().map(eh -> getProvider(eh)).collect(Collectors.toSet())));
 
 		bind(Configuration.class).toProvider(() -> {
 			Configurer conf = DefaultConfigurer.defaultConfiguration();
@@ -98,8 +101,9 @@ public class AxonGuiceModule extends AbstractModule {
 			});
 
 			// infrastructure definition
-			conf.registerComponent(SagaStore.class, ac -> new InMemorySagaStore());
-			conf.configureEmbeddedEventStore(ac -> new InMemoryEventStorageEngine());
+			conf.registerComponent(SagaStore.class, ac -> createSagaStore(ac, injectorProvider));
+			conf.registerComponent(TokenStore.class, ac -> createTokenStore(ac, injectorProvider));
+			conf.configureEmbeddedEventStore(ac -> createEventStorageEngine(ac, injectorProvider));
 
 			conf.configureResourceInjector(ac -> new ResourceInjector() {
 				public void injectResources(Object saga) {
@@ -126,6 +130,18 @@ public class AxonGuiceModule extends AbstractModule {
 		config.getAggregateClasses()
 				.forEach(aggCls -> bind(Key.get(Types.newParameterizedType(Repository.class, aggCls)))
 						.toProvider(new RepositoryProvider(aggCls, configProvider)).in(Singleton.class));
+	}
+
+	protected SagaStore<Object> createSagaStore(Configuration conf, Provider<Injector> injectorProvider) {
+		return new InMemorySagaStore();
+	}
+
+	protected TokenStore createTokenStore(Configuration conf, Provider<Injector> injectorProvider) {
+		return new InMemoryTokenStore();
+	}
+
+	protected EventStorageEngine createEventStorageEngine(Configuration conf, Provider<Injector> injectorProvider) {
+		return new InMemoryEventStorageEngine();
 	}
 
 }

@@ -19,4 +19,5 @@ public class CustomCommandGatewayProvider<T> implements Provider<T> {
 	public T get() {
 		return provider.get().createGateway(gatewayClass);
 	}
+
 }

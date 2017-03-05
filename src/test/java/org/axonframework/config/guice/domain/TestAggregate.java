@@ -12,8 +12,12 @@ public class TestAggregate {
 
 	@AggregateIdentifier
 	String id;
-	
+
 	TestAggregate() {
+	}
+
+	public String getId() {
+		return id;
 	}
 
 	@CommandHandler
