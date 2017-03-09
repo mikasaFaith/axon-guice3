@@ -1,23 +1,21 @@
 package org.axonframework.config.guice.provider;
 
 import org.axonframework.commandhandling.model.Repository;
-import org.axonframework.config.Configuration;
+import org.axonframework.config.AggregateConfigurer;
 
 import com.google.inject.Provider;
 
 public class RepositoryProvider<T> implements Provider<Repository<T>> {
 
-	final Class<T> aggregateClass;
-	final Provider<Configuration> axonConfigProvider;
+	final AggregateConfigurer<T> aggregateClass;
 
-	public RepositoryProvider(Class<T> aggregateClass, Provider<Configuration> axonConfig) {
+	public RepositoryProvider(AggregateConfigurer<T> aggregateClass) {
 		this.aggregateClass = aggregateClass;
-		this.axonConfigProvider = axonConfig;
 	}
 
 	@Override
 	public Repository<T> get() {
-		return axonConfigProvider.get().repository(aggregateClass);
+		return aggregateClass.repository();
 	}
 
 }
