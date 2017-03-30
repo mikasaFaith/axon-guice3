@@ -1,26 +1,11 @@
 package org.axonframework.config.guice;
 
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import org.axonframework.commandhandling.CommandBus;
-import org.axonframework.commandhandling.gateway.CommandGateway;
 import org.axonframework.commandhandling.gateway.CommandGatewayFactory;
-import org.axonframework.commandhandling.model.Repository;
-import org.axonframework.config.AggregateConfigurer;
 import org.axonframework.config.Configuration;
-import org.axonframework.config.Configurer;
-import org.axonframework.config.DefaultConfigurer;
 import org.axonframework.config.EventHandlingConfiguration;
 import org.axonframework.config.SagaConfiguration;
-import org.axonframework.config.guice.provider.CommandBusProvider;
 import org.axonframework.config.guice.provider.CommandGatewayFactoryProvider;
-import org.axonframework.config.guice.provider.CommandGatewayProvider;
 import org.axonframework.config.guice.provider.CustomCommandGatewayProvider;
-import org.axonframework.config.guice.provider.EventBusProvider;
-import org.axonframework.config.guice.provider.RepositoryProvider;
-import org.axonframework.eventhandling.EventBus;
 import org.axonframework.eventhandling.saga.repository.SagaStore;
 import org.axonframework.eventhandling.saga.repository.inmemory.InMemorySagaStore;
 import org.axonframework.eventhandling.tokenstore.TokenStore;
@@ -30,13 +15,10 @@ import org.axonframework.eventsourcing.eventstore.inmemory.InMemoryEventStorageE
 import org.axonframework.serialization.Serializer;
 import org.axonframework.serialization.xml.XStreamSerializer;
 
-import com.google.common.collect.Maps;
 import com.google.inject.AbstractModule;
 import com.google.inject.Injector;
-import com.google.inject.Key;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
-import com.google.inject.util.Types;
 import com.thoughtworks.xstream.XStream;
 
 public class AxonGuiceModule extends AbstractModule {
@@ -47,92 +29,75 @@ public class AxonGuiceModule extends AbstractModule {
 		this.config = config;
 	}
 
+	public GuiceConfigurer initConfigurer(AxonConfig config, Provider<Injector> injectorProvider) {
+
+		GuiceConfigurer configurer = GuiceConfigurer.defaultConfiguration(binder());
+
+		// infrastructure definition
+		configurer.registerComponent(SagaStore.class, ac -> createSagaStore(ac, config, injectorProvider));
+		configurer.registerComponent(TokenStore.class, ac -> createTokenStore(ac, config, injectorProvider));
+		configurer.configureEmbeddedEventStore(ac -> createEventStorageEngine(ac, config, injectorProvider));
+
+		// aggregates
+		config.getAggregateClasses().forEach(agg -> configurer.configureAggregate(agg));
+
+		// command handlers
+		config.getCommandHandlerClasses().forEach(cmdCls -> {
+			configurer.registerCommandHandler(ac -> injectorProvider.get().getInstance(cmdCls));
+		});
+
+		// event handlers: subscribing and tracking
+		// subscribing event handlers
+		final EventHandlingConfiguration subscribingEventHandlerCfg = new EventHandlingConfiguration();
+		config.getEventHandlerClasses().forEach(ehCls -> {
+			subscribingEventHandlerCfg.registerEventHandler(ac -> injectorProvider.get().getInstance(ehCls));
+		});
+		configurer.registerModule(subscribingEventHandlerCfg);
+
+		// tracking event handlers
+		config.getTrackingEventHandlerClasses().forEach((name, ehClasses) -> {
+			EventHandlingConfiguration trackingEventHandlerCfg = new EventHandlingConfiguration();
+			ehClasses.forEach(ehCls -> {
+				trackingEventHandlerCfg.registerEventHandler(ac -> injectorProvider.get().getInstance(ehCls));
+			});
+			trackingEventHandlerCfg.byDefaultAssignTo(name).usingTrackingProcessors();
+			configurer.registerModule(trackingEventHandlerCfg);
+		});
+
+		// saga: subscribing and tracking
+		config.getSagaClasses().forEach(s -> {
+			SagaConfiguration<?> sagaConfig = SagaConfiguration.subscribingSagaManager(s)
+					.configureSagaStore(ac -> ac.getComponent(SagaStore.class));
+			configurer.registerModule(sagaConfig);
+		});
+		config.getTrackingSagaClasses().forEach(s -> {
+			SagaConfiguration<?> sagaConfig = SagaConfiguration.trackingSagaManager(s)
+					.configureSagaStore(ac -> ac.getComponent(SagaStore.class));
+			configurer.registerModule(sagaConfig);
+		});
+		return configurer;
+	}
+
 	@Override
 	protected void configure() {
 
 		Provider<Injector> injectorProvider = getProvider(Injector.class);
-		Provider<CommandGatewayFactory> cmdGwFactoryProvider = getProvider(CommandGatewayFactory.class);
-		Set<Provider<?>> cmdProviders = config.getCommandHandlerClasses().stream().map(cmd -> getProvider(cmd))
-				.collect(Collectors.toSet());
-		Set<Provider<?>> eventHandlerProviders = config.getEventHandlerClasses().stream().map(eh -> getProvider(eh))
-				.collect(Collectors.toSet());
-		Map<String, Set<Provider<?>>> trackingEventHandlerProviders = Maps
-				.newHashMap(Maps.transformValues(config.getTrackingEventHandlerClasses(),
-						(Set<Class<?>> s) -> s.stream().map(eh -> getProvider(eh)).collect(Collectors.toSet())));
-		Set<AggregateConfigurer<?>> aggConf = config.getAggregateClasses().stream()
-				.map(agg -> AggregateConfigurer.defaultConfiguration(agg)).collect(Collectors.toSet());
-
 		bind(AxonConfig.class).toInstance(config);
+
+		GuiceConfigurer configurer = initConfigurer(config, injectorProvider);
+
 		bind(Configuration.class).toProvider(() -> {
-			Configurer conf = DefaultConfigurer.defaultConfiguration();
-
-			// aggregates
-			aggConf.forEach(agg -> conf.configureAggregate(agg));
-
-			// command handlers
-			cmdProviders.forEach(cmdProvider -> {
-				conf.registerCommandHandler(ac -> cmdProvider.get());
-			});
-
-			// event handlers: subscribing and tracking
-			final EventHandlingConfiguration subscribingEventHandlerCfg = new EventHandlingConfiguration();
-			eventHandlerProviders.forEach(ehProvider -> {
-				// subscribing event handlers
-				subscribingEventHandlerCfg.registerEventHandler(ac -> ehProvider.get());
-			});
-			conf.registerModule(subscribingEventHandlerCfg);
-
-			trackingEventHandlerProviders.forEach((name, ehProviders) -> {
-				// tracking event handlers
-				EventHandlingConfiguration trackingEventHandlerCfg = new EventHandlingConfiguration();
-				ehProviders.forEach(ehProvider -> {
-					trackingEventHandlerCfg.registerEventHandler(ac -> ehProvider.get());
-				});
-				trackingEventHandlerCfg.byDefaultAssignTo(name).usingTrackingProcessors();
-				conf.registerModule(trackingEventHandlerCfg);
-			});
-
-			// saga: subscribing and tracking
-			config.getSagaClasses().forEach(s -> {
-				SagaConfiguration<?> sagaConfig = SagaConfiguration.subscribingSagaManager(s)
-						.configureSagaStore(ac -> ac.getComponent(SagaStore.class));
-				conf.registerModule(sagaConfig);
-			});
-
-			config.getTrackingSagaClasses().forEach(s -> {
-				SagaConfiguration<?> sagaConfig = SagaConfiguration.trackingSagaManager(s)
-						.configureSagaStore(ac -> ac.getComponent(SagaStore.class));
-				conf.registerModule(sagaConfig);
-			});
-
-			// infrastructure definition
-			conf.registerComponent(SagaStore.class, ac -> createSagaStore(ac, config, injectorProvider));
-			conf.registerComponent(TokenStore.class, ac -> createTokenStore(ac, config, injectorProvider));
-			conf.configureEmbeddedEventStore(ac -> createEventStorageEngine(ac, config, injectorProvider));
-
-			conf.configureResourceInjector(ac -> new GuiceResourceInjector(injectorProvider));
-
-			Configuration configuration = conf.buildConfiguration();
+			Configuration configuration = configurer.buildConfiguration();
 			configuration.start();
 			return configuration;
-		}).in(Singleton.class);
-
-		// guice infrastructure binding
-		bind(CommandBus.class).toProvider(CommandBusProvider.class).in(Singleton.class);
-		bind(EventBus.class).toProvider(EventBusProvider.class).in(Singleton.class);
-		bind(CommandGateway.class).toProvider(CommandGatewayProvider.class).in(Singleton.class);
+		}).asEagerSingleton();
 
 		// guice command gateway binding
+		Provider<CommandGatewayFactory> cmdGwFactoryProvider = getProvider(CommandGatewayFactory.class);
 		bind(CommandGatewayFactory.class).toProvider(CommandGatewayFactoryProvider.class).in(Singleton.class);
 		config.getCommandGatewayClasses().forEach(cmdGwCls -> bind(cmdGwCls)
 				.toProvider(new CustomCommandGatewayProvider(cmdGwCls, cmdGwFactoryProvider)));
-
-		// guice repository binding
-		aggConf.forEach(aggCls -> {
-			bind(Key.get(Types.newParameterizedType(Repository.class, aggCls.aggregateType()))) //
-					.toProvider(new RepositoryProvider(aggCls)) //
-					.in(Singleton.class);
-		});
+		configurer.bind();
 	}
 
 	protected SagaStore<Object> createSagaStore(Configuration conf, AxonConfig config,
