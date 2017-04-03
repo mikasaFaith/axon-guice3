@@ -118,8 +118,7 @@ public class GuiceConfigurer extends DefaultConfigurer {
 		super.configureAggregate(aggregateConfiguration);
 		// guice repository binding
 		binder.bind(Key.get(Types.newParameterizedType(Repository.class, aggregateConfiguration.aggregateType()))) //
-				.toProvider(new RepositoryProvider(aggregateConfiguration)) //
-				.in(Singleton.class);
+				.toProvider(new RepositoryProvider(aggregateConfiguration));
 		return this;
 	}
 
