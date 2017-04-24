@@ -36,7 +36,10 @@ public class AxonGuiceModule extends AbstractModule {
 		// infrastructure definition
 		configurer.registerComponent(SagaStore.class, ac -> createSagaStore(ac, config, injectorProvider));
 		configurer.registerComponent(TokenStore.class, ac -> createTokenStore(ac, config, injectorProvider));
-		configurer.configureEmbeddedEventStore(ac -> createEventStorageEngine(ac, config, injectorProvider));
+		configurer.configureEmbeddedEventStore(ac -> {
+			Serializer serializer = createSerializer(ac, config, injectorProvider);
+			return createEventStorageEngine(ac, config, injectorProvider, serializer);
+		});
 
 		// aggregates
 		config.getAggregateClasses().forEach(agg -> configurer.configureAggregate(agg));
@@ -110,10 +113,7 @@ public class AxonGuiceModule extends AbstractModule {
 	}
 
 	protected EventStorageEngine createEventStorageEngine(Configuration conf, AxonConfig config,
-			Provider<Injector> injectorProvider) {
-		// USE the Serializer for persistence storage
-		// Serializer serializer = createSerializer(conf, config,
-		// injectorProvider);
+			Provider<Injector> injectorProvider, Serializer serializer) {
 		return new InMemoryEventStorageEngine();
 	}
 
